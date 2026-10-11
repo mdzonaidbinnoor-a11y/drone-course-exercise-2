@@ -1,0 +1,34 @@
+services:
+  drone-course-control:
+    build:
+      context: ..
+      dockerfile: control/Dockerfile
+    image: drone-course-control:latest
+    shm_size: '2gb'
+    container_name: project_cvar_upm_drone_course_control
+    hostname: drone-course-control-dev
+    privileged: true
+    working_dir: /root/project_cvar_upm_drone_course/control
+    environment:
+      - VNC_ENABLE=1
+      - VNC_RESOLUTION=1920x1080
+      - VNC_DEPTH=24
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=1
+      - DISPLAY=$DISPLAY
+      - XAUTHORITY=$XAUTHORITY
+    ports:
+      - "5901:5901" # VNC server
+    volumes:
+      - ../:/root/project_cvar_upm_drone_course
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    command: bash -c "tail -f /dev/null"
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
