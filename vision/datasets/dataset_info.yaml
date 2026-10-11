@@ -1,0 +1,20 @@
+camera_intrinsics:
+  K_matrix:
+  - - 365.77364921569824
+    - 0.0
+    - 820.0
+  - - 0.0
+    - 365.773645401001
+    - 616.0
+  - - 0.0
+    - 0.0
+    - 1.0
+  distortion_coefficients:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  image_width: 1640
+  image_height: 1232
+  distortion_model: plumb_bob

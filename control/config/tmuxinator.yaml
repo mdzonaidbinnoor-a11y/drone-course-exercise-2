@@ -1,0 +1,95 @@
+<%
+# Input parameters
+platform = @settings["platform"]
+
+if platform == "gz"
+  use_sim_time = "true"
+  base_frame = "/drone0"
+else
+  use_sim_time = "false"
+  base_frame = "base_link"
+end
+%>
+
+name: drone0
+attach: true
+root: ./
+startup_window: mission
+windows:
+  # Platform
+  - platform:
+      layout: even-vertical
+      panes:
+      <% if platform == "gz" %>
+      # Gazebo Simulator
+        - ros2 launch as2_gazebo_assets launch_simulation.py
+            use_sim_time:=<%= use_sim_time %>
+            simulation_config_file:=config/gazebo/world.yaml
+            headless:=true
+        - ros2 launch as2_platform_gazebo platform_gazebo_launch.py
+            namespace:=drone0
+            use_sim_time:=<%= use_sim_time %>
+            config_file:=config/config.yaml
+            simulation_config_file:=config/gazebo/world.yaml
+            control_modes_file:=config/control_modes/platform_control_modes.yaml
+      <% else %>
+      # Multirotor Simulator
+        - ros2 launch as2_platform_multirotor_simulator as2_platform_multirotor_simulator.launch.py
+            namespace:=drone0
+            use_sim_time:=<%= use_sim_time %>
+            config_file:=config/config.yaml
+            control_modes_file:=config/control_modes/platform_control_modes.yaml
+      <% end %>
+    
+      # Initialize platform and takeoff
+        - ./config/initialize.bash
+
+  # Basic Robotics Functions
+  - BRF:
+      layout: even-vertical
+      panes:
+        # State Estimation
+        - ros2 launch as2_state_estimator state_estimator_launch.py
+            namespace:=drone0
+            use_sim_time:=<%= use_sim_time %>
+            base_frame:=<%= base_frame %>
+            plugin_name:=ground_truth
+        
+        # Motion Controller
+        - ros2 launch as2_motion_controller controller_launch.py
+            namespace:=drone0
+            use_sim_time:=<%= use_sim_time %>
+            plugin_name:=pid_speed_controller
+            config_file:=config/config.yaml
+            plugin_config_file:=config/pid_speed_controller.yaml
+            plugin_available_modes_config_file:=config/control_modes/available_modes.yaml
+
+
+  # Mission monitoring
+  - mission:
+      layout: even-vertical
+      panes:
+        # Alphanumeric Viewer
+        - ros2 run as2_alphanumeric_viewer as2_alphanumeric_viewer_node
+            --ros-args -r  __ns:=/drone0 -p use_sim_time:=<%= use_sim_time %>
+        
+        # Mission
+        # - sleep 5 && python3 python_interface/exercise2_solution.py
+
+  # Visualization
+  - rviz:
+      layout: even-vertical
+      panes:
+        # Rviz
+        - ros2 launch as2_visualization swarm_viz.launch.py
+              namespace_list:=drone0
+              rviz_config:=config/rviz2_config.rviz
+              drone_model:=quadrotor_base
+              use_sim_time:=<%= use_sim_time %>
+        
+        # Gates Publisher
+        - python3 config/gates_static_publisher.py --gates_config config/gates_config.yaml --use_sim_time <%= use_sim_time %>
+        - python3 config/gates_tracker.py --gates_config config/gates_config.yaml --use_sim_time <%= use_sim_time %>
+        
+        # Render Camera
+        - python3 config/render_camera.py --camera_frame_id /drone0/camera --camera_resolution 10 10 --camera_period 0.1 --use_sim_time <%= use_sim_time %>

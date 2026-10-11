@@ -1,51 +1,45 @@
-# Control Track
+# CVAR-UPM Drone Course (ROS 2 + Aerostack2)
 
-This track contains the practical ROS 2 + Aerostack2 control exercises for the drone racing environment.
-The progression is designed to move from direct command execution to full autonomous control over a gate circuit.
+This repository contains the practical material for a drone course from **Universidad Politécnica de Madrid (UPM)**.
+This course was developed by the **CVAR Group (Computer Vision & Aerial Robotics), UPM**:
+[https://cvar-upm.github.io/drone_racing_web/](https://cvar-upm.github.io/drone_team_web/)
+The course is based on **ROS 2 Humble** and **[Aerostack2](https://aerostack2.github.io/)**, and focuses on both multirotor control and computer-vision tasks for autonomous drone racing in a gate-circuit simulation.
 
-Before starting, follow the setup guide in [docs/INSTALLATION.md](docs/INSTALLATION.md).
-For API links and message references, use [docs/REFERENCES.md](docs/REFERENCES.md).
+<img src="control/docs/resources/multi-dron.png" alt="UPM Drone Course multi-drone simulation" width="500" />
 
-## Exercises
+## Share This Repository
 
-### Exercise 1: Position Control Fundamentals
+Use this QR code to quickly share the repository:
 
-Statement: [exercises/Exercise1.md](exercises/Exercise1.md)
+<img src="control/docs/resources/github_qr.png" alt="QR code for the CVAR-UPM Drone Course repository" width="300" />
 
-You start with the basic control workflow: setting position mode, sending pose references from CLI, and implementing the same behavior in your own node.
-The goal is to understand the control interface and complete the gate circuit with position commands.
+## Control
 
-### Exercise 2: Speed Control and Controller Tuning
+The control track covers ROS 2 interfaces, position/speed control, and smooth trajectory tracking through gates.
 
-Statement: [exercises/Exercise2.md](exercises/Exercise2.md)
+- Track README: [control/README.md](control/README.md)
+- Installation: [control/docs/INSTALLATION.md](control/docs/INSTALLATION.md)
+- References: [control/docs/REFERENCES.md](control/docs/REFERENCES.md)
+- Exercise 1: Drone Position Control ([control/exercises/Exercise1.md](control/exercises/Exercise1.md))
+- Exercise 2: Drone Speed Control ([control/exercises/Exercise2.md](control/exercises/Exercise2.md))
+- Exercise 3: Smooth Trajectory Speed Control Through Gates ([control/exercises/Exercise3.md](control/exercises/Exercise3.md))
 
-This exercise moves to speed mode and `TwistStamped` commands.
-You implement closed-loop velocity control, then improve performance by tuning control gains so the drone can traverse the circuit more effectively.
+## Vision
 
-### Exercise 3: Smooth Trajectory Through Gates
+The vision track focuses on perception tasks for gate understanding and camera localization.
 
-Statement: [exercises/Exercise3.md](exercises/Exercise3.md)
+- Track README: [vision/README.md](vision/README.md)
+- Exercise 1: Gate Segmentation in Image ([vision/exercises/Exercise1.md](vision/exercises/Exercise1.md))
+- Exercise 2: Gate Corner Detection in Image ([vision/exercises/Exercise2.md](vision/exercises/Exercise2.md))
+- Exercise 3: Camera Localization from Gate Image and Known Gate Size ([vision/exercises/Exercise3.md](vision/exercises/Exercise3.md))
 
-In this final control exercise, you build a smoother strategy to cross all gates using speed commands and trajectory planning ideas.
-You should integrate stable tracking, consistent gate crossing, and clean overall flight behavior.
+## Join Us
 
-## Code and Workspace
+If you want to join the CVAR-UPM drone team, follow the process described in [JOIN_US.md](JOIN_US.md).
 
-Python templates are available at [python_interface/exercise_1/exercise_1.py](python_interface/exercise_1/exercise_1.py) and [python_interface/exercise_2/exercise_2.py](python_interface/exercise_2/exercise_2.py).
-The ROS 2 workspace for this track is `drone_course_ws`.
-Use [launch_as2.bash](launch_as2.bash) to start the environment and [stop.bash](stop.bash) to stop all sessions.
+## Questions and Support
 
-## Quick Start
+If you have questions, please use the official GitHub channels for this repository:
 
-From repo root:
-
-```bash
-cd control
-./launch_as2.bash
-```
-
-Stop:
-
-```bash
-./stop.bash
-```
+- Issues: https://github.com/cvar-upm-drone-team/project_cvar_upm_drone_course/issues
+- Discussions: https://github.com/cvar-upm-drone-team/project_cvar_upm_drone_course/discussions
