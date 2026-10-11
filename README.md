@@ -39,13 +39,3 @@ The vision track focuses on perception tasks for gate understanding and camera l
 - Exercise 2: Gate Corner Detection in Image ([vision/exercises/Exercise2.md](vision/exercises/Exercise2.md))
 - Exercise 3: Camera Localization from Gate Image and Known Gate Size ([vision/exercises/Exercise3.md](vision/exercises/Exercise3.md))
 
-## Join Us
-
-If you want to join the CVAR-UPM drone team, follow the process described in [JOIN_US.md](JOIN_US.md).
-
-## Questions and Support
-
-If you have questions, please use the official GitHub channels for this repository:
-
-- Issues: https://github.com/cvar-upm-drone-team/project_cvar_upm_drone_course/issues
-- Discussions: https://github.com/cvar-upm-drone-team/project_cvar_upm_drone_course/discussions
