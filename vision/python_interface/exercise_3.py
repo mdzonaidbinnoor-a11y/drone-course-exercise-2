@@ -27,140 +27,282 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 
-import argparse
-import os
+"""Vision 3: classical ring detection and PnP pose estimation.
 
+Assumptions: a fully visible upright square gate and modest camera roll.
+Gate-local axes are x right, y down, z normal, origin at its centre.
+localize_gate(image) follows the assignment interface: gate pose in the
+OpenCV camera frame, with quaternion (w,x,y,z).
+
+IMPORTANT DATASET CONVENTION: the supplied 65-image archive's labels are
+consistent with CAMERA pose in a WORLD frame (x forward, y left, z up),
+not gate pose in the camera frame as stated in the assignment PDF.
+The fixed gate lies in world x=0 with centre (0,0,1.35) metres.
+The CLI defaults to that label convention; --label_frame gate_camera uses
+the PDF convention instead. --gate_height changes the fixed world height.
+This frame interpretation was checked against this archive, not unseen data.
+No label, filename, or reference pose is used to estimate an image's pose.
+Corner identity uses an upright/low-roll assumption; arbitrary roll remains
+ambiguous for an unmarked square. No OCR or learned corner identity is used.
+"""
+import argparse
+from pathlib import Path
 import cv2
 import numpy as np
+from scipy.spatial.transform import Rotation
 
-Coord3D = tuple[float, float, float]
-Quaternion = tuple[float, float, float, float]
-Localization = tuple[Coord3D, Quaternion]
-
-# Camera intrinsics (from dataset_info.yaml)
-IMAGE_WIDTH = 1640
-IMAGE_HEIGHT = 1232
-
-K = np.array(
-    [[365.77364921569824, 0.0, 820.0], [0.0, 365.773645401001, 616.0], [0.0, 0.0, 1.0]],
-    dtype=np.float64,
-)
-
-# Distortion coefficients [k1, k2, p1, p2, k3] - plumb_bob model
-DIST_COEFFS = np.zeros((5, 1), dtype=np.float64)  # all zero = no distortion
-
-OUTER_GATE_SIZE = 2.7
-INNER_GATE_SIZE = 1.5
+IMAGE_WIDTH, IMAGE_HEIGHT = 1640, 1232
+K = np.array([[365.77364921569824, 0, 820],
+              [0, 365.773645401001, 616], [0, 0, 1]], dtype=np.float64)
+DIST_COEFFS = np.zeros((5, 1), dtype=np.float64)
+OUTER_GATE_SIZE, INNER_GATE_SIZE = 2.7, 1.5
+# Columns map optical right/down/forward axes into forward/left/up axes.
+OPTICAL_TO_BODY = np.array([[0., 0., 1.], [-1., 0., 0.], [0., -1., 0.]])
+GATE_TO_WORLD = OPTICAL_TO_BODY.copy()
 
 
-def load_dataset(dataset_path: str) -> list[tuple[cv2.Mat, list[Localization]]]:
-    dataset = []
-    images_path = os.path.join(dataset_path, 'images')
-    if not os.path.exists(images_path):
-        print(f'Images directory not found: {images_path}')
-        return dataset
+def camera_matrix(image):
+    # Valid for uniformly/nonuniformly resized images, not cropped images.
+    h, w = image.shape[:2]
+    return np.diag([w / IMAGE_WIDTH, h / IMAGE_HEIGHT, 1.0]) @ K
 
-    labels_path = os.path.join(dataset_path, 'labels')
-    if not os.path.exists(labels_path):
-        print(f'Labels directory not found: {labels_path}')
-        return dataset
 
-    for filename in os.listdir(images_path):
-        if filename.endswith('.jpg') or filename.endswith('.png'):
-            image_path = os.path.join(images_path, filename)
-            image: np.ndarray | None = cv2.imread(image_path)
-            if image is None:
-                print(f'Failed to load image: {image_path}')
+def model_points():
+    return np.array([(x * side / 2, y * side / 2, 0)
+                     for side in (OUTER_GATE_SIZE, INNER_GATE_SIZE)
+                     for x, y in ((-1, -1), (1, -1), (1, 1), (-1, 1))],
+                    dtype=np.float64)
+
+
+def order_quad(points):
+    p = np.asarray(points, dtype=np.float64).reshape(4, 2)
+    angles = np.arctan2(p[:, 1] - p[:, 1].mean(),
+                        p[:, 0] - p[:, 0].mean())
+    p = p[np.argsort(angles)]
+    # Upright gate and modest camera roll: the leftmost of the two highest
+    # vertices identifies top-left more reliably than min(x+y) in perspective.
+    top = np.argsort(p[:, 1])[:2]
+    start = top[np.argmin(p[top, 0])]
+    return np.roll(p, -start, axis=0)
+
+
+def quad(contour):
+    perimeter = cv2.arcLength(contour, True)
+    for fraction in (0.015, 0.025, 0.04, 0.06):
+        approx = cv2.approxPolyDP(contour, fraction * perimeter, True)
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            return order_quad(approx)
+    return None
+
+
+def detect_gate_corners(image):
+    """Return eight pixel corners per ring, outer then inner, in cyclic order.
+
+    Try saturated colour masks and grayscale masks. Require nested convex
+    quadrilaterals whose geometry fits the known outer/inner size ratio.
+    This is a baseline detector; tune masks using actual course images.
+    """
+    h, w = image.shape[:2]
+    scale = min(1.0, 900.0 / max(h, w))
+    small = cv2.resize(image, None, fx=scale, fy=scale)
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    masks = [cv2.inRange(hsv, (0, 65, 35), (179, 255, 255))]
+    for low, high in ((0, 15), (15, 40), (40, 90), (90, 135), (135, 179)):
+        masks.append(cv2.inRange(hsv, (low, 65, 35), (high, 255, 255)))
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    masks.extend([binary, cv2.bitwise_not(binary)])
+    candidates = []
+    ratio = INNER_GATE_SIZE / OUTER_GATE_SIZE
+    unit = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]], np.float32)
+    for mask in masks:
+        contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE,
+                                                cv2.CHAIN_APPROX_SIMPLE)
+        if hierarchy is None:
+            continue
+        hierarchy = hierarchy[0]
+        for idx, contour in enumerate(contours):
+            area = abs(cv2.contourArea(contour))
+            if area < small.shape[0] * small.shape[1] * 0.001:
                 continue
-            h, w = image.shape[:2]
-
-            label_path = os.path.join(
-                labels_path, filename.replace('.jpg', '.txt').replace('.png', '.txt')
-            )
-            labels: list[Localization] = []
-            with open(label_path, 'r') as f:
-                for line in f:
-                    parts = line.strip().split()
-                    parts = list(map(float, parts))
-                    coords: Coord3D = (parts[0], parts[1], parts[2])
-                    orient: Quaternion = (parts[3], parts[4], parts[5], parts[6])
-                    labels.append((coords, orient))
-
-            dataset.append((image, labels))
-
-    return dataset
-
-
-def translation_error(t1: Coord3D, t2: Coord3D) -> float:
-    v1 = np.array(list(t1))
-    v2 = np.array(list(t2))
-    return float(np.linalg.norm(v1 - v2))
-
-
-def rotation_error(o1: Quaternion, o2: Quaternion):
-    q1 = np.array(o1)
-    q2 = np.array(o2)
-
-    q1 = q1 / np.linalg.norm(q1)
-    q2 = q2 / np.linalg.norm(q2)
-
-    dot = abs(np.dot(q1, q2))
-
-    dot = np.clip(dot, 0.0, 1.0)
-
-    angle_rad = 2.0 * np.arccos(dot)
-    return np.degrees(angle_rad)
+            outer = quad(contour)
+            if outer is None:
+                continue
+            transform = cv2.getPerspectiveTransform(unit, outer.astype(np.float32))
+            expected = cv2.perspectiveTransform((unit * ratio)[None], transform)[0]
+            child = hierarchy[idx][2]
+            while child != -1:
+                inner = quad(contours[child])
+                inner_area = abs(cv2.contourArea(contours[child]))
+                if inner is not None and 0.07 < inner_area / area < 0.8:
+                    choices = [np.roll(p, k, axis=0)
+                               for p in (inner, inner[::-1]) for k in range(4)]
+                    inner = min(choices, key=lambda p: np.mean((p - expected)**2))
+                    mismatch = np.sqrt(np.mean(np.sum((inner - expected)**2, axis=1)))
+                    relative = mismatch / np.sqrt(area)
+                    if relative < 0.12:
+                        pts = np.vstack([outer, inner]) / scale
+                        candidates.append((relative, -area, pts))
+                child = hierarchy[child][0]
+    # Prefer size-ratio agreement; suppress repeated masks of the same ring.
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    gates = []
+    for _, _, points in candidates:
+        if not any(np.linalg.norm(points[:4].mean(axis=0) - old[:4].mean(axis=0))
+                   < 0.25 * np.sqrt(abs(cv2.contourArea(old[:4].astype(np.float32))))
+                   for old in gates):
+            gates.append(points)
+    return gates
 
 
-def localize_gate(image: np.ndarray) -> list[Localization]:
-    coord_X = 0
-    coord_Y = 0
-    coord_Z = 0
-    quat_x = 0
-    quat_y = 0
-    quat_z = 0
-    quat_w = 0
-    # TODO (Exercise 3): Use the code from previous tasks to calculate the camera position relative
-    # to the gate. Use OUTER_GATE_SIZE and INNER_GATE_SIZE constants defined above
-    return [((coord_X, coord_Y, coord_Z), (quat_x, quat_y, quat_z, quat_w))]
+def estimate_pose(points, image):
+    obj = model_points()
+    cam = camera_matrix(image)
+    ok, rvec, tvec = cv2.solvePnP(obj, points, cam, DIST_COEFFS,
+                                 flags=cv2.SOLVEPNP_ITERATIVE)
+    if not ok or not np.isfinite(tvec).all():
+        return None
+    matrix, _ = cv2.Rodrigues(rvec)
+    if np.any((obj @ matrix.T + tvec.reshape(1, 3))[:, 2] <= 0):
+        return None
+    projected, _ = cv2.projectPoints(obj, rvec, tvec, cam, DIST_COEFFS)
+    rms = float(np.sqrt(np.mean(np.sum((projected.reshape(-1, 2) - points)**2, axis=1))))
+    # Reject inconsistent geometry rather than inventing a pose.
+    diagonal = np.linalg.norm(points[0] - points[2])
+    if rms > max(4.0, diagonal * 0.04):
+        return None
+    qx, qy, qz, qw = Rotation.from_matrix(matrix).as_quat()
+    pose = (tuple(float(x) for x in tvec.ravel()),
+            (float(qw), float(qx), float(qy), float(qz)))
+    return pose, rvec, tvec, rms
 
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(
-        description='Load a dataset of images and segmentation labels.'
-    )
-    parser.add_argument(
-        '--dataset_path',
-        type=str,
-        help='Path to the dataset directory',
-        default='../datasets/positions',
-    )
-    return parser.parse_args()
+def localize_gate(image):
+    """Required interface: list of ((x,y,z), (qw,qx,qy,qz))."""
+    results = [estimate_pose(points, image) for points in detect_gate_corners(image)]
+    return [result[0] for result in results if result is not None]
+
+
+def camera_world_pose(rvec, tvec, gate_height=1.35):
+    """Invert gate->optical PnP, then apply fixed world/body axis transforms.
+
+    X_camera = R_cg X_gate + t_cg
+    camera_position_world = gate_origin_world - R_wg R_cg.T t_cg
+    R_world_body = R_wg R_cg.T R_optical_body
+    """
+    r_cg, _ = cv2.Rodrigues(rvec)
+    position = np.array([0., 0., gate_height]) - GATE_TO_WORLD @ r_cg.T @ tvec.ravel()
+    matrix = GATE_TO_WORLD @ r_cg.T @ OPTICAL_TO_BODY.T
+    qx, qy, qz, qw = Rotation.from_matrix(matrix).as_quat()
+    return (tuple(float(x) for x in position),
+            (float(qw), float(qx), float(qy), float(qz)))
+
+
+def translation_error(a, b):
+    return float(np.linalg.norm(np.asarray(a) - np.asarray(b)))
+
+
+def rotation_error(a, b):
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    if np.linalg.norm(a) == 0 or np.linalg.norm(b) == 0:
+        return float('nan')
+    dot = abs(np.dot(a / np.linalg.norm(a), b / np.linalg.norm(b)))
+    return float(np.degrees(2 * np.arccos(np.clip(dot, 0, 1))))
+
+
+def read_labels(path):
+    labels = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        values = list(map(float, line.split()))
+        if len(values) != 7:
+            raise ValueError(f'{path}: expected x y z qw qx qy qz')
+        labels.append((tuple(values[:3]), tuple(values[3:])))
+    return labels
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--dataset_path', required=True, type=Path)
+    parser.add_argument('--show', action='store_true', help='Space/any key: next; Q: stop')
+    parser.add_argument('--output_dir', type=Path, help='Optional annotated images')
+    parser.add_argument('--label_frame', choices=('camera_world', 'gate_camera'),
+                        default='camera_world', help='Reference-label convention (see module docstring)')
+    parser.add_argument('--gate_height', type=float, default=1.35,
+                        help='Known fixed gate-centre world height in metres (default: 1.35)')
+    args = parser.parse_args()
+    images_dir = args.dataset_path / 'images'
+    labels_dir = args.dataset_path / 'labels'
+    if not images_dir.is_dir() or not labels_dir.is_dir():
+        parser.error('dataset_path must contain images/ and labels/ folders')
+    paths = sorted(p for p in images_dir.iterdir()
+                   if p.suffix.lower() in ('.jpg', '.jpeg', '.png'))
+    if not paths:
+        parser.error('No images found in images/')
+    if args.output_dir:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+    print(f'Found {len(paths)} images. Processing one image at a time.', flush=True)
+    print('Model: centred XY plane, x right, y down; quaternions w,x,y,z.')
+    print(f'Evaluation label frame: {args.label_frame}; fixed gate height: {args.gate_height} m.')
+    print('Errors use only unambiguous one-reference/one-detection images.')
+    translations, rotations = [], []
+    processed = detected = evaluated = 0
+    for path in paths:
+        image = cv2.imread(str(path))
+        if image is None:
+            print(f'{path.name}: unreadable image; skipped', flush=True)
+            continue
+        processed += 1
+        found = []
+        canvas = image.copy()
+        for points in detect_gate_corners(image):
+            estimate = estimate_pose(points, image)
+            if estimate is None:
+                continue
+            found.append(camera_world_pose(estimate[1], estimate[2], args.gate_height)
+                         if args.label_frame == 'camera_world' else estimate[0])
+            for i, pt in enumerate(points):
+                pos = tuple(np.round(pt).astype(int))
+                cv2.circle(canvas, pos, 5, (0, 255, 0), -1)
+                cv2.putText(canvas, str(i), pos, cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7, (0, 0, 255), 2)
+            cv2.drawFrameAxes(canvas, camera_matrix(image), DIST_COEFFS,
+                              estimate[1], estimate[2], 0.5)
+        detected += bool(found)
+        label_path = labels_dir / (path.stem + '.txt')
+        labels = read_labels(label_path) if label_path.exists() else []
+        status = f'{path.name}: {len(found)} gate(s) detected'
+        if len(found) == 1 and len(labels) == 1:
+            te = translation_error(labels[0][0], found[0][0])
+            re = rotation_error(labels[0][1], found[0][1])
+            translations.append(te)
+            rotations.append(re)
+            evaluated += 1
+            status += f'; translation={te:.3f} m; orientation={re:.2f} deg'
+            status += f'; predicted xyz={np.round(found[0][0], 3)}'
+        else:
+            status += '; excluded from pose averages (missing/ambiguous pairing)'
+        print(status, flush=True)
+        cv2.putText(canvas, f'{path.name}: {len(found)} gate(s)', (15, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        if args.output_dir:
+            cv2.imwrite(str(args.output_dir / (path.stem + '.jpg')), canvas)
+        if args.show:
+            cv2.namedWindow('Vision 3 - any key: next; Q: quit', cv2.WINDOW_NORMAL)
+            cv2.imshow('Vision 3 - any key: next; Q: quit', canvas)
+            if cv2.waitKey(0) & 0xff in (ord('q'), 27):
+                break
+    if args.show:
+        cv2.destroyAllWindows()
+    print(f'Processed: {processed}/{len(paths)}; images with detections: {detected}; evaluated: {evaluated}')
+    if evaluated:
+        print(f'Mean translation error = {np.mean(translations):.6f} metres')
+        print(f'Mean orientation error = {np.mean(rotations):.6f} degrees')
+        print('Means are conditional on successful one-to-one detections, not all dataset images.')
+    else:
+        print('No evaluable poses. Inspect images, masks, labels and model conventions.')
 
 
 if __name__ == '__main__':
-    args = parse_arguments()
-    dataset = load_dataset(args.dataset_path)
-    print(f'Loaded {len(dataset)} images and their corresponding labels.')
-
-    result: list[tuple[np.ndarray, list[Localization], list[Localization]]] = []
-    for image, labels in dataset:
-        calculated_position: list[Localization] = localize_gate(image)
-        result.append((image, labels, calculated_position))
-
-    translation_errors: list[float] = []
-    orientation_errors: list[float] = []
-
-    for r in result:
-        image: np.ndarray = r[0]
-        gt_pose: Localization = r[1][0]
-        calculated_pose: Localization = r[2][0]
-
-        t_error = translation_error(gt_pose[0], calculated_pose[0])
-        r_error = rotation_error(gt_pose[1], gt_pose[1])
-
-        translation_errors.append(t_error)
-        orientation_errors.append(r_error)
-
-    print('Mean translation error = ', np.mean(translation_errors))
-    print('Mean orientation error = ', np.mean(orientation_errors))
+    main()
