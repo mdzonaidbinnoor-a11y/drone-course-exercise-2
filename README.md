@@ -1,5 +1,5 @@
 # CVAR-UPM Drone Course (ROS 2 + Aerostack2)
-## Exercise 2: PID Speed Control
+## Control Exercise 2: PID Speed Control
 
 Solution: control/python_interface/exercise_2/exercise_2.py
 
