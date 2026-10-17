@@ -10,9 +10,9 @@ Replace the placeholders below with the uploaded video links.
 
 | Exercise | Video |
 | --- | --- |
-| Control Exercise 1 | ADD_CONTROL_EXERCISE_1_VIDEO_LINK |
-| Control Exercise 2 | ADD_CONTROL_EXERCISE_2_VIDEO_LINK |
-| Vision Exercise 3 | ADD_VISION_EXERCISE_3_VIDEO_LINK |
+| Control Exercise 1 |  https://youtu.be/8h_diADqOJg |
+| Control Exercise 2 | https://youtu.be/wpMZJnI0kgY  |
+| Vision Exercise 3  | https://youtu.be/5bX1A7cPDd0  |
 
 ## Control Exercise 1 – Position commands and path following
 
@@ -32,10 +32,6 @@ The course's existing position controller tracks these references. A target-reac
 ### Run
 
 Start the simulator as described below. In a separate terminal, load the ROS 2 environment and workspace, then run **one** of these programs from the repository root:
-
-```bash
-python3 control/python_interface/exercise_1/exercise_1_1.py
-```
 
 ```bash
 python3 control/python_interface/exercise_1/exercise_1_2.py
